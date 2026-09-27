@@ -1,0 +1,621 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__CLUSTER_NAME__ | Redis Cluster</title>
+<link rel="icon" id="favicon" href="data:,">
+<style>
+  :root {
+    --bg: #E8ECEF;
+    --paper: #F7F8F9;
+    --ink: #18212B;
+    --muted: #5A6673;
+    --rule: #C8D0D8;
+    --grid: #DCE2E7;
+    --ok: #1E7250;      --ok-tint: #D9EBE1;
+    --warn: #8F5B00;    --warn-tint: #F3E4C6;
+    --fail: #B0261C;    --fail-tint: #F5D8D4;
+    --unknown: #5A6673; --unknown-tint: #DDE2E6;
+    --font: "Pretendard", "Pretendard Variable", "Apple SD Gothic Neo", "Malgun Gothic",
+            "Noto Sans KR", "Segoe UI", system-ui, sans-serif;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151A1F;
+      --paper: #1C232A;
+      --ink: #E4E9ED;
+      --muted: #97A3AF;
+      --rule: #34404B;
+      --grid: #29323B;
+      --ok: #5BC08F;      --ok-tint: #1B3228;
+      --warn: #E3AC45;    --warn-tint: #382D17;
+      --fail: #F2786D;    --fail-tint: #3D211F;
+      --unknown: #97A3AF; --unknown-tint: #262E36;
+      color-scheme: dark;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 var(--font);
+    font-variant-numeric: tabular-nums;
+  }
+  a { color: inherit; }
+  :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+  /* ---------- 상태 밴드: 페이지에서 유일하게 크게 쓰는 요소 ---------- */
+  .band {
+    --tone: var(--unknown);
+    --tint: var(--unknown-tint);
+    background: var(--tint);
+    border-bottom: 1px solid var(--rule);
+    position: relative;
+  }
+  .band[data-status="ok"]   { --tone: var(--ok);   --tint: var(--ok-tint); }
+  .band[data-status="warn"] { --tone: var(--warn); --tint: var(--warn-tint); }
+  .band[data-status="fail"] { --tone: var(--fail); --tint: var(--fail-tint); }
+
+  .band-inner, main {
+    max-width: 1320px;
+    margin: 0 auto;
+    padding-left: clamp(16px, 3vw, 32px);
+    padding-right: clamp(16px, 3vw, 32px);
+  }
+  .band-inner {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px 40px;
+    padding-top: 22px;
+    padding-bottom: 22px;
+    align-items: start;
+  }
+  .cluster-name { margin: 0; font-size: 15px; color: var(--muted); font-weight: 600; }
+  .verdict h1 {
+    margin: 2px 0 4px;
+    font-size: clamp(30px, 4.2vw, 46px);
+    line-height: 1.12;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: var(--tone);
+  }
+  .summary { margin: 0; font-size: 17px; }
+  .issues { list-style: none; margin: 12px 0 0; padding: 0; max-width: 78ch; }
+  .issues li { position: relative; padding-left: 18px; margin: 3px 0; }
+  .issues li::before {
+    content: ""; position: absolute; left: 0; top: 0.55em;
+    width: 9px; height: 9px; border-radius: 2px; background: var(--muted);
+  }
+  .issues li[data-status="warn"]::before { background: var(--warn); }
+  .issues li[data-status="fail"]::before { background: var(--fail); }
+
+  .meta { text-align: right; font-size: 14px; color: var(--muted); }
+  .meta p { margin: 0 0 6px; }
+  .meta time { color: var(--ink); font-weight: 600; }
+  .refresh-choices { display: inline-flex; gap: 2px; margin-left: 6px; }
+  .refresh-choices a {
+    text-decoration: none; padding: 2px 8px; border-radius: 4px; color: var(--ink);
+  }
+  .refresh-choices a:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+  .refresh-choices a[aria-current="true"] { background: var(--ink); color: var(--paper); }
+  .notice { color: var(--ink); max-width: 36ch; margin-left: auto; }
+  .notice:empty { display: none; }
+
+  .countdown { position: absolute; left: 0; right: 0; bottom: -1px; height: 3px; }
+  .countdown span {
+    display: block; height: 100%; width: 100%; background: var(--tone);
+    transform-origin: left center; transform: scaleX(0); opacity: .55;
+  }
+  .countdown span.run { animation: fill var(--refresh, 10s) linear forwards; }
+  @keyframes fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+  @media (prefers-reduced-motion: reduce) { .countdown { display: none; } }
+
+  /* ---------- 본문 ---------- */
+  main { padding-top: 28px; padding-bottom: 56px; }
+  section + section { margin-top: 40px; }
+  h2 { font-size: 20px; margin: 0 0 12px; letter-spacing: -0.01em; }
+  .section-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 24px; margin-bottom: 12px; }
+  .section-head h2 { margin: 0; }
+  .aside { color: var(--muted); font-size: 13px; margin: 0; }
+
+  .table-wrap { overflow-x: auto; background: var(--paper); border: 1px solid var(--rule); border-radius: 6px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  thead th { font-size: 13px; font-weight: 600; color: var(--muted); background: color-mix(in srgb, var(--bg) 55%, var(--paper)); white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.num, th.num { text-align: right; white-space: nowrap; }
+  .sub { display: block; color: var(--muted); font-size: 12.5px; }
+  .detail { color: var(--muted); min-width: 22ch; }
+
+  .status { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; white-space: nowrap; }
+  .status::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
+  .status[data-s="ok"] { color: var(--ok); }
+  .status[data-s="warn"] { color: var(--warn); }
+  .status[data-s="fail"] { color: var(--fail); }
+  .status[data-s="unknown"] { color: var(--unknown); }
+
+  tr.down td { background: color-mix(in srgb, var(--fail-tint) 60%, transparent); }
+  .node-cell { display: flex; gap: 10px; align-items: flex-start; white-space: nowrap; }
+  .swatch { flex: none; width: 12px; height: 12px; border-radius: 3px; margin-top: 4px; background: var(--c); }
+  .addr { font-weight: 600; }
+  .err { color: var(--fail); white-space: normal; max-width: 36ch; }
+
+  .mem { min-width: 150px; }
+  .membar { height: 5px; background: var(--grid); border-radius: 3px; margin-top: 5px; overflow: hidden; }
+  .membar i { display: block; height: 100%; background: var(--ok); }
+  .membar i[data-s="warn"] { background: var(--warn); }
+  .membar i[data-s="fail"] { background: var(--fail); }
+  .hot { color: var(--warn); font-weight: 700; }
+
+  /* ---------- 추이 ---------- */
+  .legend { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; padding: 0; list-style: none; }
+  .legend button {
+    font: inherit; font-size: 13px; color: var(--ink); background: var(--paper);
+    border: 1px solid var(--rule); border-radius: 4px; padding: 3px 10px 3px 8px;
+    display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+  }
+  .legend button .swatch { margin-top: 0; }
+  .legend button[aria-pressed="false"] { color: var(--muted); border-style: dashed; }
+  .legend button[aria-pressed="false"] .swatch { background: transparent; box-shadow: inset 0 0 0 1.5px var(--c); }
+
+  .charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  @media (max-width: 820px) { .charts { grid-template-columns: minmax(0, 1fr); } }
+  figure.chart { margin: 0; background: var(--paper); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px 8px; }
+  figure.chart figcaption { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  figure.chart figcaption strong { font-size: 16px; white-space: nowrap; }
+  figure.chart figcaption span { font-size: 12.5px; color: var(--muted); text-align: right; }
+  .plot { position: relative; height: 196px; margin-top: 6px; }
+  .plot svg { display: block; width: 100%; height: 100%; overflow: visible; }
+  .plot text { fill: var(--muted); font-size: 11px; font-family: var(--font); }
+  .plot .empty { fill: var(--muted); font-size: 13px; }
+  .tip {
+    position: absolute; top: 4px; pointer-events: none; z-index: 2;
+    background: var(--ink); color: var(--paper); border-radius: 5px;
+    padding: 6px 9px; font-size: 12.5px; line-height: 1.45; white-space: nowrap; display: none;
+  }
+  .tip b { font-weight: 600; }
+  .tip .row { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+  .tip .row i { width: 8px; height: 8px; border-radius: 2px; background: var(--c); display: inline-block; margin-right: 6px; }
+
+  @media (max-width: 640px) {
+    .band-inner { grid-template-columns: minmax(0, 1fr); }
+    .meta { text-align: left; }
+    .notice { margin-left: 0; }
+  }
+</style>
+</head>
+<body>
+<header class="band" id="band" data-status="unknown">
+  <div class="band-inner">
+    <div class="verdict">
+      <p class="cluster-name">__CLUSTER_NAME__</p>
+      <h1 id="verdict-title">상태를 불러오는 중</h1>
+      <p class="summary" id="verdict-summary">&nbsp;</p>
+      <ul class="issues" id="issues"></ul>
+    </div>
+    <div class="meta">
+      <p>마지막 수집 <time id="collected-at">-</time></p>
+      <p>화면 갱신 <span class="refresh-choices" id="refresh-choices"></span></p>
+      <p class="notice" id="notice"></p>
+    </div>
+  </div>
+  <div class="countdown" aria-hidden="true"><span id="countdown"></span></div>
+</header>
+
+<main>
+  <section aria-labelledby="h-cluster">
+    <h2 id="h-cluster">클러스터 점검</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>항목</th><th>현재 값</th><th>정상 기준</th><th>판정</th><th>상세</th></tr></thead>
+        <tbody id="checks"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-trend">
+    <div class="section-head">
+      <h2 id="h-trend">최근 10분 추이</h2>
+      <p class="aside">노드 이름을 누르면 그래프에서 숨기거나 다시 표시합니다.</p>
+    </div>
+    <ul class="legend" id="legend"></ul>
+    <div class="charts">
+      <figure class="chart" data-metric="mem_pct">
+        <figcaption><strong>Memory %</strong><span id="mem-caption">used_memory / maxmemory</span></figcaption>
+        <div class="plot"></div>
+      </figure>
+      <figure class="chart" data-metric="evictions">
+        <figcaption><strong>Evictions</strong><span id="ev-caption">수집 주기당 evicted_keys 증가분</span></figcaption>
+        <div class="plot"></div>
+      </figure>
+      <figure class="chart" data-metric="ops">
+        <figcaption><strong>OPS/sec</strong><span>instantaneous_ops_per_sec</span></figcaption>
+        <div class="plot"></div>
+      </figure>
+      <figure class="chart" data-metric="clients">
+        <figcaption><strong>Clients</strong><span>connected_clients</span></figcaption>
+        <div class="plot"></div>
+      </figure>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-nodes">
+    <h2 id="h-nodes">노드</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>노드</th><th>역할</th><th>PING</th><th>cluster_state</th>
+            <th class="num">DBSIZE</th><th>메모리</th>
+            <th class="num" id="ev-head">Evicted 최근 10분</th>
+            <th class="num">OPS/sec</th><th class="num">Clients</th>
+          </tr>
+        </thead>
+        <tbody id="nodes"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+const BOOT = __BOOT_JSON__;
+
+const PALETTE_LIGHT = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#B8860B", "#3E9BD6", "#6F4E9C", "#8C6D31", "#3F6E75"];
+const PALETTE_DARK  = ["#4DA3E0", "#F0853A", "#2BC495", "#E29AC3", "#F2B63C", "#7CC8F2", "#A98BD6", "#C9A76A", "#79AEB6"];
+const STATUS_WORD = { ok: "정상", warn: "주의", fail: "이상", unknown: "확인 불가" };
+const TITLE_TAG = { ok: "정상", warn: "주의", fail: "이상", unknown: "?" };
+const darkMq = window.matchMedia("(prefers-color-scheme: dark)");
+
+const state = { snap: null, hidden: new Set(), fetchError: null, warming: null };
+
+/* ---------------- 유틸 ---------------- */
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const nodeColor = (i) => (darkMq.matches ? PALETTE_DARK : PALETTE_LIGHT)[i % PALETTE_LIGHT.length];
+const fmtInt = (v) => (v == null ? "-" : Number(v).toLocaleString("ko-KR"));
+const pad2 = (n) => String(n).padStart(2, "0");
+const fmtTime = (ts) => { const d = new Date(ts * 1000); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`; };
+function fmtBytes(b) {
+  if (b == null) return "-";
+  const u = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0, v = b;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return `${v >= 100 || i === 0 ? v.toFixed(0) : v.toFixed(1)} ${u[i]}`;
+}
+function fmtCompact(v) {
+  if (v == null) return "-";
+  const a = Math.abs(v);
+  if (a >= 1e6) return (v / 1e6).toFixed(a >= 1e7 ? 0 : 1) + "M";
+  if (a >= 1e3) return (v / 1e3).toFixed(a >= 1e4 ? 0 : 1) + "k";
+  return Number.isInteger(v) ? String(v) : v.toFixed(1);
+}
+function fmtMinutes(sec) { return `${Math.max(1, Math.round(sec / 60))}분`; }
+
+/* ---------------- 갱신 주기 선택 ---------------- */
+function renderRefreshChoices() {
+  const opts = [[5, "5s", "5초"], [10, "10s", "10초"], [30, "30s", "30초"], [60, "1m", "1분"]];
+  if (!opts.some(([s]) => s === BOOT.refreshSeconds)) {
+    opts.push([BOOT.refreshSeconds, `${BOOT.refreshSeconds}s`, `${BOOT.refreshSeconds}초`]);
+    opts.sort((a, b) => a[0] - b[0]);
+  }
+  $("refresh-choices").innerHTML = opts.map(([s, q, label]) =>
+    `<a href="?refresh=${q}" ${s === BOOT.refreshSeconds ? 'aria-current="true"' : ""}>${label}</a>`
+  ).join("");
+  document.documentElement.style.setProperty("--refresh", `${BOOT.refreshSeconds}s`);
+}
+
+/* ---------------- 상태 밴드 ---------------- */
+function renderBand() {
+  const snap = state.snap;
+  const band = $("band");
+  const issues = [];
+  let status = "unknown", title = "상태를 불러오는 중", summary = state.warming || "\u00a0";
+
+  if (snap) {
+    status = snap.verdict.status;
+    title = snap.verdict.title;
+    summary = snap.verdict.summary;
+    issues.push(...snap.verdict.issues);
+    $("collected-at").textContent = fmtTime(snap.collected_at);
+    $("collected-at").dateTime = new Date(snap.collected_at * 1000).toISOString();
+
+    const lag = Date.now() / 1000 - snap.collected_at;
+    const limit = Math.max(snap.collect_interval * 3, 30);
+    if (lag > limit) {
+      issues.unshift({ status: "warn", text: `수집이 ${Math.round(lag)}초째 갱신되지 않았습니다. 대시보드 서버 로그를 확인하세요.` });
+      if (status === "ok") { status = "warn"; title = "확인이 필요합니다"; }
+    }
+  }
+  if (state.fetchError) {
+    issues.unshift({ status: "unknown", text: `대시보드 서버에 연결할 수 없습니다 (${state.fetchError}). 마지막으로 받은 데이터를 표시합니다.` });
+  }
+
+  band.dataset.status = status;
+  $("verdict-title").textContent = title;
+  $("verdict-summary").textContent = summary;
+  $("issues").innerHTML = issues.map((i) => `<li data-status="${esc(i.status)}">${esc(i.text)}</li>`).join("");
+  $("notice").textContent = BOOT.notice || "";
+
+  document.title = `[${TITLE_TAG[status]}] ${BOOT.clusterName} | Redis Cluster`;
+  const color = getComputedStyle(band).getPropertyValue("--tone").trim() || "#888";
+  $("favicon").href = "data:image/svg+xml," + encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="${color}"/></svg>`);
+}
+
+/* ---------------- 클러스터 점검 표 ---------------- */
+function renderChecks() {
+  const rows = state.snap?.checks ?? [];
+  $("checks").innerHTML = rows.map((c) => `
+    <tr>
+      <th scope="row">${esc(c.label)}</th>
+      <td>${esc(c.value)}</td>
+      <td>${esc(c.expected)}</td>
+      <td><span class="status" data-s="${esc(c.status)}">${STATUS_WORD[c.status] ?? esc(c.status)}</span></td>
+      <td class="detail">${esc(c.detail)}</td>
+    </tr>`).join("") || `<tr><td colspan="5" class="detail">수집된 데이터가 없습니다.</td></tr>`;
+}
+
+/* ---------------- 노드 표 ---------------- */
+function renderNodes() {
+  const snap = state.snap;
+  const nodes = snap?.nodes ?? [];
+  const winMin = Math.round((snap?.window_seconds ?? BOOT.windowSeconds) / 60);
+  $("ev-head").textContent = `Evicted 최근 ${winMin}분`;
+
+  $("nodes").innerHTML = nodes.map((n) => {
+    const c = nodeColor(n.index);
+    const idLine = n.node_id ? `<span class="sub">${esc(n.node_id.slice(0, 10))}</span>` : "";
+    const errLine = n.error ? `<span class="sub err">${esc(n.error)}</span>` : "";
+    const cmdErr = Object.entries(n.command_errors || {}).map(([k, v]) => `${k}: ${v}`).join(" / ");
+    const cmdErrLine = cmdErr ? `<span class="sub err">${esc(cmdErr)}</span>` : "";
+
+    const role = n.role == null ? "-" :
+      n.role === "replica"
+        ? `replica${n.master_addr ? `<span class="sub">master ${esc(n.master_addr)}</span>` : ""}`
+        : "master";
+
+    const ping = n.up
+      ? `<span class="status" data-s="ok">${esc(n.ping)}</span>`
+      : `<span class="status" data-s="fail">응답 없음</span>`;
+
+    const cs = n.cluster_state == null ? "-" :
+      `<span class="status" data-s="${n.cluster_state === "ok" ? "ok" : "fail"}">${esc(n.cluster_state)}</span>`;
+
+    const dbsize = n.role === "master" ? fmtInt(n.dbsize) : `<span class="sub">master 에서만 집계</span>`;
+
+    let mem = "-";
+    if (n.used_memory != null) {
+      const limit = n.mem_basis === "maxmemory" ? fmtBytes(n.maxmemory)
+        : n.mem_basis === "system" ? `${fmtBytes(n.total_system_memory)} (시스템)`
+        : "제한 없음";
+      const pct = n.mem_pct == null ? "" : `<strong>${n.mem_pct.toFixed(1)}%</strong> `;
+      const bar = n.mem_pct == null ? "" :
+        `<div class="membar"><i data-s="${esc(n.mem_status)}" style="width:${Math.min(100, n.mem_pct)}%"></i></div>`;
+      const note = n.mem_basis === "system" ? `<span class="sub">maxmemory 미설정, 시스템 메모리 기준</span>`
+        : n.mem_basis === "unlimited" ? `<span class="sub">maxmemory 미설정</span>` : "";
+      mem = `${pct}${fmtBytes(n.used_memory)} / ${limit}${bar}${note}`;
+    }
+
+    let ev = "-";
+    if (n.evicted_window != null) {
+      const partial = n.evicted_window_seconds != null && n.evicted_window_seconds < (snap.window_seconds - snap.collect_interval)
+        ? `<span class="sub">수집 ${fmtMinutes(n.evicted_window_seconds)} 기준</span>` : "";
+      const restart = n.evicted_restarted ? `<span class="sub">카운터 초기화 감지</span>` : "";
+      ev = `<span class="${n.evicted_window > 0 ? "hot" : ""}">${fmtInt(n.evicted_window)}</span>${partial}${restart}`;
+    }
+
+    return `
+      <tr class="${n.up ? "" : "down"}">
+        <td><div class="node-cell"><span class="swatch" style="--c:${c}"></span>
+          <div><span class="addr">${esc(n.addr)}</span>${idLine}${errLine}${cmdErrLine}</div></div></td>
+        <td>${role}</td>
+        <td>${ping}</td>
+        <td>${cs}</td>
+        <td class="num">${dbsize}</td>
+        <td class="mem">${mem}</td>
+        <td class="num">${ev}</td>
+        <td class="num">${fmtInt(n.ops)}</td>
+        <td class="num">${fmtInt(n.clients)}</td>
+      </tr>`;
+  }).join("") || `<tr><td colspan="9" class="detail">수집된 데이터가 없습니다.</td></tr>`;
+}
+
+/* ---------------- 범례 ---------------- */
+function renderLegend() {
+  const nodes = state.snap?.nodes ?? [];
+  $("legend").innerHTML = nodes.map((n) => `
+    <li><button type="button" data-addr="${esc(n.addr)}" aria-pressed="${!state.hidden.has(n.addr)}">
+      <span class="swatch" style="--c:${nodeColor(n.index)}"></span>${esc(n.addr)}${n.role ? ` <span class="sub" style="display:inline">${esc(n.role)}</span>` : ""}
+    </button></li>`).join("");
+}
+$("legend").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-addr]");
+  if (!btn) return;
+  const addr = btn.dataset.addr;
+  state.hidden.has(addr) ? state.hidden.delete(addr) : state.hidden.add(addr);
+  renderLegend();
+  renderCharts();
+});
+
+/* ---------------- 차트 (SVG 직접 그림: 외부 CDN 없이 폐쇄망에서도 동작) ---------------- */
+const METRICS = {
+  mem_pct:   { fmt: (v) => `${v.toFixed(1)}%`, axis: (v) => `${fmtCompact(v)}%`, fixedMax: 100 },
+  evictions: { fmt: (v) => `${fmtInt(v)}건`, axis: fmtCompact, integer: true },
+  ops:       { fmt: (v) => fmtInt(v), axis: fmtCompact, integer: true },
+  clients:   { fmt: (v) => fmtInt(v), axis: fmtCompact, integer: true },
+};
+
+// y 축 최대값: 눈금 4칸이 1/2/5 x 10^k 간격이 되도록. 정수 지표는 눈금도 정수.
+function niceMax(v, integer) {
+  const raw = v > 0 ? v / 4 : 0.25;
+  const p = Math.pow(10, Math.floor(Math.log10(raw)));
+  const n = raw / p;
+  let step = (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * p;
+  if (integer) step = Math.max(1, Math.ceil(step));
+  return step * 4;
+}
+
+function renderCharts() {
+  document.querySelectorAll("figure.chart").forEach((fig) => renderChart(fig, fig.dataset.metric));
+  if (state.snap) {
+    const s = state.snap;
+    $("mem-caption").textContent = `used_memory / maxmemory, 점선은 경고 ${s.memory_warn_pct}%와 위험 ${s.memory_crit_pct}%`;
+    $("ev-caption").textContent = `${s.collect_interval}초 수집 주기당 evicted_keys 증가분`;
+  }
+}
+
+function renderChart(fig, metric) {
+  const plot = fig.querySelector(".plot");
+  const W = Math.max(260, plot.clientWidth);
+  const H = plot.clientHeight || 196;
+  const M = { l: 44, r: 10, t: 8, b: 22 };
+  const iw = W - M.l - M.r, ih = H - M.t - M.b;
+  const snap = state.snap;
+  const spec = METRICS[metric];
+  const css = getComputedStyle(document.documentElement);
+  const gridColor = css.getPropertyValue("--grid").trim();
+  const ruleColor = css.getPropertyValue("--rule").trim();
+
+  const windowSec = snap?.window_seconds ?? BOOT.windowSeconds;
+  const t1 = snap ? snap.collected_at : Date.now() / 1000;
+  const t0 = t1 - windowSec;
+  const ts = snap?.series?.ts ?? [];
+  const visible = (snap?.nodes ?? []).filter((n) => !state.hidden.has(n.addr));
+
+  let maxV = 0;
+  for (const n of visible) for (const v of snap.series.nodes[n.addr]?.[metric] ?? []) if (v != null && v > maxV) maxV = v;
+  const yMax = spec.fixedMax ?? niceMax(maxV * 1.1, spec.integer);
+  const x = (t) => M.l + ((t - t0) / (t1 - t0)) * iw;
+  const y = (v) => M.t + ih - (v / yMax) * ih;
+
+  let g = "";
+  // y 격자
+  for (let k = 0; k <= 4; k++) {
+    const v = (yMax / 4) * k, yy = y(v).toFixed(1);
+    g += `<line x1="${M.l}" x2="${M.l + iw}" y1="${yy}" y2="${yy}" stroke="${k === 0 ? ruleColor : gridColor}" />`;
+    g += `<text x="${M.l - 6}" y="${yy}" text-anchor="end" dominant-baseline="middle">${esc(spec.axis(v))}</text>`;
+  }
+  // x 눈금: 2분 간격
+  const stepMin = windowSec >= 480 ? (iw < 420 ? 5 : 2) : 1;
+  for (let m = 0; m * 60 <= windowSec; m += stepMin) {
+    const xx = x(t1 - m * 60).toFixed(1);
+    const label = m === 0 ? "지금" : `${m}분 전`;
+    g += `<line x1="${xx}" x2="${xx}" y1="${M.t}" y2="${M.t + ih}" stroke="${gridColor}" stroke-dasharray="2 4" />`;
+    g += `<text x="${xx}" y="${H - 4}" text-anchor="${m === 0 ? "end" : "middle"}">${label}</text>`;
+  }
+  // 메모리 임계선
+  if (metric === "mem_pct" && snap) {
+    const warn = css.getPropertyValue("--warn").trim(), fail = css.getPropertyValue("--fail").trim();
+    for (const [v, c] of [[snap.memory_warn_pct, warn], [snap.memory_crit_pct, fail]]) {
+      g += `<line x1="${M.l}" x2="${M.l + iw}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="${c}" stroke-dasharray="5 4" stroke-width="1.2" opacity=".8" />`;
+    }
+  }
+  // 선
+  let lines = "";
+  for (const n of visible) {
+    const vals = snap.series.nodes[n.addr]?.[metric] ?? [];
+    const color = nodeColor(n.index);
+    let d = "", pen = false, dots = "";
+    vals.forEach((v, i) => {
+      if (v == null) { pen = false; return; }
+      const px = x(ts[i]).toFixed(1), py = y(Math.min(v, yMax)).toFixed(1);
+      const prevNull = i === 0 || vals[i - 1] == null, nextNull = i === vals.length - 1 || vals[i + 1] == null;
+      if (prevNull && nextNull) dots += `<circle cx="${px}" cy="${py}" r="2.2" fill="${color}" />`;
+      d += `${pen ? "L" : "M"}${px} ${py}`;
+      pen = true;
+    });
+    if (d) lines += `<path d="${d}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" />`;
+    lines += dots;
+  }
+  const empty = !ts.length
+    ? `<text class="empty" x="${M.l + iw / 2}" y="${M.t + ih / 2}" text-anchor="middle">첫 수집을 기다리는 중</text>` : "";
+
+  plot.innerHTML =
+    `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(fig.querySelector("strong").textContent)} 최근 ${Math.round(windowSec / 60)}분 추이">
+      ${g}${lines}${empty}
+      <line class="cross" x1="0" x2="0" y1="${M.t}" y2="${M.t + ih}" stroke="${ruleColor}" visibility="hidden" />
+      <rect class="hit" x="${M.l}" y="${M.t}" width="${iw}" height="${ih}" fill="transparent" />
+    </svg><div class="tip"></div>`;
+
+  // 호버: 가장 가까운 수집 시점의 노드별 값
+  const svg = plot.querySelector("svg"), hit = plot.querySelector(".hit");
+  const cross = plot.querySelector(".cross"), tip = plot.querySelector(".tip");
+  const hide = () => { cross.setAttribute("visibility", "hidden"); tip.style.display = "none"; };
+  if (!ts.length) return;
+  hit.addEventListener("pointermove", (e) => {
+    const r = svg.getBoundingClientRect();
+    const px = ((e.clientX - r.left) / r.width) * W;
+    const t = t0 + ((px - M.l) / iw) * (t1 - t0);
+    let best = 0;
+    for (let i = 1; i < ts.length; i++) if (Math.abs(ts[i] - t) < Math.abs(ts[best] - t)) best = i;
+    const xx = x(ts[best]);
+    cross.setAttribute("x1", xx); cross.setAttribute("x2", xx); cross.setAttribute("visibility", "visible");
+
+    const rows = visible
+      .map((n) => ({ n, v: snap.series.nodes[n.addr]?.[metric]?.[best] }))
+      .sort((a, b) => (b.v ?? -1) - (a.v ?? -1))
+      .map(({ n, v }) => `<div class="row"><span><i style="--c:${nodeColor(n.index)}"></i>${esc(n.addr)}</span><b>${v == null ? "-" : esc(spec.fmt(v))}</b></div>`)
+      .join("");
+    tip.innerHTML = `<div>${fmtTime(ts[best])}</div>${rows}`;
+    tip.style.display = "block";
+    const left = (xx / W) * r.width;
+    const tw = tip.offsetWidth;
+    tip.style.left = `${left + 12 + tw > r.width ? Math.max(0, left - 12 - tw) : left + 12}px`;
+  });
+  hit.addEventListener("pointerleave", hide);
+}
+
+/* ---------------- 폴링 ---------------- */
+function restartCountdown() {
+  const el = $("countdown");
+  el.classList.remove("run");
+  void el.offsetWidth;          // 애니메이션 재시작
+  el.classList.add("run");
+}
+
+function renderAll() {
+  renderBand();
+  renderChecks();
+  renderLegend();
+  renderCharts();
+  renderNodes();
+}
+
+async function tick() {
+  try {
+    const res = await fetch(BOOT.snapshotUrl, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = await res.json();
+    if (!body.success) throw new Error(`${body.code} ${body.message}`);
+    state.fetchError = null;
+    if (body.result == null) {
+      state.warming = body.message;
+    } else {
+      state.warming = null;
+      state.snap = body.result;
+    }
+  } catch (err) {
+    state.fetchError = err.message || String(err);
+  }
+  renderAll();
+  restartCountdown();
+  // 첫 수집 전에는 빨리 다시 확인
+  const next = state.snap ? BOOT.refreshSeconds : Math.min(BOOT.refreshSeconds, 2);
+  setTimeout(tick, next * 1000);
+}
+
+let resizeTimer;
+window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderCharts, 120); });
+darkMq.addEventListener?.("change", renderAll);
+
+renderRefreshChoices();
+renderAll();
+tick();
+</script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+# 대시보드 사용자 노출 메시지 (pxa-common 메시지 카탈로그)
+dashboard:
+  warming_up: "첫 수집을 기다리는 중입니다. {interval}초 안에 표시됩니다."
+  refresh_invalid: "refresh='{value}' 를 해석할 수 없어 기본값 {fallback}초로 표시합니다. 예: ?refresh=30s, ?refresh=1m"
+  refresh_clamped: "refresh 는 {min}~{max}초 범위만 허용되어 {applied}초로 조정했습니다."
